@@ -1,0 +1,598 @@
+package app.syntheticresin.audiocast
+
+import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.graphics.Typeface
+import android.media.projection.MediaProjectionManager
+import android.os.*
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.widget.*
+import androidx.appcompat.app.AppCompatActivity
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.mediarouter.app.MediaRouteButton
+import com.google.android.gms.cast.framework.CastButtonFactory
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.button.MaterialButtonToggleGroup
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.materialswitch.MaterialSwitch
+import com.google.android.material.slider.Slider
+import java.util.Locale
+
+class MainActivity : AppCompatActivity() {
+    private val handler = Handler(Looper.getMainLooper())
+    private val prefs by lazy { getSharedPreferences("settings", 0) }
+    private lateinit var headline: TextView
+    private lateinit var hint: TextView
+    private lateinit var session: TextView
+    private lateinit var action: MaterialButton
+    private lateinit var sourceIcon: ImageView
+    private lateinit var sourceName: TextView
+    private lateinit var sourceDetail: TextView
+    private lateinit var openSource: MaterialButton
+    private lateinit var audioRing: AudioRingView
+    private lateinit var description: TextView
+    private lateinit var bufferProgress: com.google.android.material.progressindicator.LinearProgressIndicator
+    private lateinit var delayProgress: com.google.android.material.progressindicator.LinearProgressIndicator
+    private val visuals=object:Runnable {
+        override fun run() {
+            val bands=LiveService.levels.snapshot()
+            audioRing.show(bands)
+            handler.postDelayed(this,50)
+        }
+    }
+    private lateinit var mediaAccess: MaterialButton
+    private lateinit var captureChoices: LinearLayout
+    private var choiceSignature=""
+    private var displayedPackage: String? = null
+    private var sourceDialog: androidx.appcompat.app.AlertDialog? = null
+    private lateinit var deviceName: TextView
+    private lateinit var connection: TextView
+    private lateinit var network: TextView
+    private lateinit var bufferValue: TextView
+    private lateinit var delayValue: TextView
+    private lateinit var networkValue: TextView
+    private lateinit var castButton: MediaRouteButton
+    private lateinit var permissionButton: MaterialButton
+    private var castButtonReady = false
+    private var pendingMode: String? = null
+    private var notificationAsked = false
+    private var settingsDialog: BottomSheetDialog? = null
+    private var languageDialog: androidx.appcompat.app.AlertDialog? = null
+    private var logsDialog: androidx.appcompat.app.AlertDialog? = null
+    private var privacyDialog: androidx.appcompat.app.AlertDialog? = null
+    private var donationDialog: com.google.android.material.bottomsheet.BottomSheetDialog? = null
+    private val refresh = object : Runnable {
+        override fun run() {
+            val running = LiveService.running
+            headline.text = Strings.get(when {
+                running && LiveService.ready -> R.string.relay_active
+                running -> R.string.relay_preparing
+                else -> R.string.idle
+            })
+            hint.text = when {
+                running && !LiveService.sampleMode && LiveService.inputDbfs <= -100 && LiveService.elapsedSeconds >= 10 -> Strings.get(R.string.silent_hint)
+                !running && LiveService.status !in listOf(Strings.get(R.string.idle), Strings.get(R.string.stopped), Strings.get(R.string.user_stopped)) -> LiveService.status
+                else -> ""
+            }
+            hint.visibility = if (hint.text.isEmpty()) View.GONE else View.VISIBLE
+            session.text = formatTime(if(running) LiveService.elapsedSeconds else 0)
+            description.text=Strings.get(when {
+                running && LiveService.sampleMode -> R.string.sample_hint
+                running && LiveService.ready -> R.string.stream_description
+                running -> R.string.preparing_description
+                else -> R.string.idle_description
+            })
+            bufferProgress.setProgressCompat(if(running) (LiveService.bufferedSeconds/LiveService.targetDelay*100).toInt().coerceIn(0,100) else 0,false)
+            delayProgress.setProgressCompat(((if(running) LiveService.targetDelay else prefs.getInt("buffer",15))-15)*100/15,false)
+            val actionLabel = if (running) Strings.get(R.string.stop_relay) else Strings.get(R.string.start_relay)
+            action.contentDescription = actionLabel; action.tooltipText = actionLabel
+            if (action.isActivated != running) { action.isActivated = running; action.setIconResource(if (running) R.drawable.ic_stop else R.drawable.ic_play) }
+            action.isEnabled = !CaptureService.running
+            deviceName.text = if (CastController.device == Strings.get(R.string.not_selected)) Strings.get(R.string.choose_speaker) else CastController.device
+            connection.text = CastController.status
+            connection.visibility = if (CastController.status == Strings.get(R.string.cast_disconnected)) View.GONE else View.VISIBLE
+            if (!castButtonReady && CastController.context != null) {
+                try { CastButtonFactory.setUpMediaRouteButton(this@MainActivity, castButton); castButtonReady = true }
+                catch (e: Exception) { Diagnostics.log("Cast button: ${e.javaClass.simpleName}") }
+            }
+            castButton.isEnabled = localAllowed() && castButtonReady
+            permissionButton.visibility = if (localAllowed()) View.GONE else View.VISIBLE
+            bufferValue.text = if (running) Strings.get(R.string.buffer_seconds, LiveService.bufferedSeconds) else "—"
+            delayValue.text = Strings.get(R.string.approx_delay, if (running) LiveService.targetDelay else prefs.getInt("buffer", 15).coerceIn(15,30))
+            val wifiAddress=LiveService.wifiAddress(this@MainActivity)
+            networkValue.text=if(wifiAddress!=null) "Wi-Fi" else Strings.get(R.string.no_connection)
+            network.text=wifiAddress ?: Strings.get(R.string.wifi_needed)
+            updateSourceApp()
+            handler.postDelayed(this, 1000)
+        }
+    }
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        val light = resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK != android.content.res.Configuration.UI_MODE_NIGHT_YES
+        WindowInsetsControllerCompat(window, window.decorView).apply {
+            isAppearanceLightStatusBars = light
+            isAppearanceLightNavigationBars = light
+        }
+        pendingMode = savedInstanceState?.getString("pendingMode")
+        notificationAsked = savedInstanceState?.getBoolean("notificationAsked") ?: false
+        Diagnostics.init(this); CastController.init(this)
+        val root = column().apply {
+            setPadding(dp(20),dp(16),dp(20),dp(24))
+            setBackgroundColor(if(light) color(com.google.android.material.R.attr.colorSurface) else 0xff11111b.toInt())
+        }
+        val primary = column().apply { setPadding(dp(16), dp(12), dp(16), dp(12)) }
+        val onPrimary = color(com.google.android.material.R.attr.colorOnPrimaryContainer)
+        primary.background=android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.TL_BR,
+            if(resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES)
+                intArrayOf(0xff30255f.toInt(),0xff201c39.toInt(),0xff191827.toInt())
+            else intArrayOf(0xffdfcbff.toInt(),0xffeae0f7.toInt(),0xfff3eff8.toInt())).apply { cornerRadius=dp(12).toFloat() }
+        val stage=FrameLayout(this)
+        audioRing=AudioRingView(this,if(light) 0xff9561cf.toInt() else 0xffba84ff.toInt())
+        stage.addView(audioRing,FrameLayout.LayoutParams(-1,dp(136)).apply { topMargin=dp(26) })
+        action = iconButton(Strings.get(R.string.start_relay), R.drawable.ic_play, filled = true) { toggleRelay() }
+        action.cornerRadius=dp(42); action.iconSize=dp(26)
+        action.iconTint=android.content.res.ColorStateList.valueOf(0xff35205e.toInt())
+        val buttonSurface=android.graphics.drawable.GradientDrawable().apply {
+            setColor(if(light) 0xffdbc5f7.toInt() else 0xffcfadf6.toInt())
+            cornerRadius=dp(42).toFloat()
+        }
+        action.backgroundTintList=null
+        action.background=android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x336750a4),buttonSurface,null)
+        headline = text("",12f,bold=true).apply {
+            gravity=Gravity.CENTER_VERTICAL; includeFontPadding=false; minHeight=dp(34)
+            setTextColor(if(light) 0xff493267.toInt() else 0xfffaf6ff.toInt()); setPadding(dp(10),dp(6),dp(10),dp(6))
+            background=android.graphics.drawable.GradientDrawable().apply {
+                setColor(if(light) 0xffe4d5f5.toInt() else 0xff4b326d.toInt())
+                cornerRadius=dp(12).toFloat()
+                setStroke(dp(1),if(light) 0xffb99bd8.toInt() else 0xff7955a3.toInt())
+            }
+            val wave=androidx.appcompat.content.res.AppCompatResources.getDrawable(this@MainActivity,R.drawable.ic_wave)?.mutate()?.apply { setBounds(0,0,dp(18),dp(18)) }; setCompoundDrawablesRelative(wave,null,null,null)
+            compoundDrawableTintList=android.content.res.ColorStateList.valueOf(currentTextColor); compoundDrawablePadding=dp(6)
+        }
+
+        val headerBlock=FrameLayout(this)
+        val cardHeader=row().apply { gravity=Gravity.CENTER_VERTICAL }
+        val titleGroup=row().apply { gravity=Gravity.CENTER_VERTICAL }
+        titleGroup.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_wave)
+            imageTintList=android.content.res.ColorStateList.valueOf(if(light) 0xff604180.toInt() else 0xffe1c9ff.toInt())
+            scaleType=ImageView.ScaleType.FIT_CENTER
+            importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        },LinearLayout.LayoutParams(dp(22),dp(24)).apply { marginEnd=dp(8) })
+        titleGroup.addView(text(Strings.get(R.string.app_name),16f,bold=true).apply {
+            gravity=Gravity.CENTER_VERTICAL;includeFontPadding=false
+        })
+        cardHeader.addView(titleGroup,LinearLayout.LayoutParams(0,dp(32),1f))
+        headline.textSize=11f
+        headline.minHeight=dp(30)
+        cardHeader.addView(headline,LinearLayout.LayoutParams(-2,dp(30)))
+        cardHeader.addView(iconButton(Strings.get(R.string.settings),R.drawable.ic_settings) { showSettings() }.apply {
+            iconSize=dp(17)
+            backgroundTintList=android.content.res.ColorStateList.valueOf(if(light) 0xffe1d8ed.toInt() else 0xff2b253e.toInt())
+        },LinearLayout.LayoutParams(dp(36),dp(36)).apply { marginStart=dp(8) })
+        headerBlock.addView(cardHeader,FrameLayout.LayoutParams(-1,dp(36)))
+        headerBlock.addView(text(Strings.get(R.string.relay_summary),10f).apply {
+            setTextColor(if(light) 0xff71637f.toInt() else 0xffb3a9c5.toInt())
+            includeFontPadding=false
+        },FrameLayout.LayoutParams(-1,-2).apply { topMargin=dp(34);marginStart=dp(30) })
+        stage.addView(headerBlock,FrameLayout.LayoutParams(-1,dp(58),Gravity.TOP))
+        val controls=column().apply { gravity=Gravity.CENTER_HORIZONTAL }
+        val dial=FrameLayout(this)
+        fun halo(size:Int,alpha:Int) {
+            dial.addView(View(this).apply {
+                background=android.graphics.drawable.GradientDrawable().apply {
+                    shape=android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(androidx.core.graphics.ColorUtils.setAlphaComponent(0xffa575e8.toInt(),alpha))
+                    if(size==104)setStroke(dp(1),0xcc9670ce.toInt())
+                }
+            },FrameLayout.LayoutParams(dp(size),dp(size),Gravity.CENTER))
+        }
+        halo(108,28);halo(100,42)
+        dial.addView(View(this).apply {
+            background=android.graphics.drawable.GradientDrawable().apply {
+                shape=android.graphics.drawable.GradientDrawable.OVAL
+                setColor(if(light) 0xffcbbbe5.toInt() else 0xff302449.toInt())
+                setStroke(dp(1),if(light) 0xffad94ce.toInt() else 0xff76559d.toInt())
+            }
+        },FrameLayout.LayoutParams(dp(92),dp(92),Gravity.CENTER))
+        action.cornerRadius=dp(38);action.iconSize=dp(32)
+        dial.addView(action,FrameLayout.LayoutParams(dp(76),dp(76),Gravity.CENTER))
+        controls.addView(dial,LinearLayout.LayoutParams(dp(108),dp(108)))
+        session=text("00:00",12f).apply { gravity=Gravity.CENTER; includeFontPadding=false; setPadding(0,dp(3),0,0);setTextColor(if(light) 0xff6e627c.toInt() else 0xffc3bad5.toInt()) };controls.addView(session)
+        stage.addView(controls,FrameLayout.LayoutParams(dp(108),-2,Gravity.TOP or Gravity.START).apply { topMargin=dp(70);leftMargin=dp(0) })
+        primary.addView(stage,LinearLayout.LayoutParams(-1,dp(210)))
+        description=text("",12f).apply { setTextColor(if(light) 0xff6e627c.toInt() else 0xffaaa5b8.toInt()); gravity=Gravity.CENTER; setPadding(0,dp(4),0,dp(8)) }
+        description.visibility=View.GONE; primary.addView(description)
+        hint=text("",12f).apply { setTextColor(onPrimary); setPadding(0,0,0,dp(8)) }; primary.addView(hint)
+        primary.addView(View(this).apply { setBackgroundColor(if(light) 0x226750a4 else 0x22c4a4f0.toInt()) },LinearLayout.LayoutParams(-1,dp(1)))
+        val sourceRow=row().apply { gravity=Gravity.CENTER_VERTICAL; setPadding(0,dp(10),0,0) }
+        sourceIcon=ImageView(this).apply { scaleType=ImageView.ScaleType.FIT_CENTER; importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO }
+        sourceRow.addView(sourceIcon,LinearLayout.LayoutParams(dp(36),dp(36)))
+        val labels=column().apply { setPadding(dp(12),0,dp(8),0) }
+        sourceName=text("",15f,bold=true).apply { setTextColor(if(light) 0xff352745.toInt() else 0xfffaf8ff.toInt()) }; labels.addView(sourceName)
+        sourceDetail=text("",11f).apply { setTextColor(if(light) 0xff6e627c.toInt() else 0xffaaa5b8.toInt()); setPadding(0,dp(3),0,0) }; labels.addView(sourceDetail)
+        sourceRow.addView(labels,LinearLayout.LayoutParams(0,-2,1f))
+        openSource=iconButton(Strings.get(R.string.open_playing_app),R.drawable.ic_chevron) { openPlayingApp() }; sourceRow.addView(openSource,LinearLayout.LayoutParams(dp(48),dp(48)))
+        mediaAccess=iconButton(Strings.get(R.string.media_access_settings),R.drawable.ic_settings) { showMediaAccess() }; sourceRow.addView(mediaAccess,LinearLayout.LayoutParams(dp(48),dp(48)))
+        captureChoices=row().apply { gravity=Gravity.CENTER_VERTICAL }
+        primary.addView(HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled=false;addView(captureChoices) })
+        primary.addView(sourceRow)
+        root.addView(card(primary,primary=true)); gap(root,10)
+        updateSourceApp()
+
+        val device = column().apply { setPadding(dp(18), dp(12), dp(14), dp(12)) }
+        device.addView(text(Strings.get(R.string.playback_target), 12f, muted = true))
+        gap(device, 7)
+        val deviceRow = row().apply { gravity = Gravity.CENTER_VERTICAL }
+        val names = column()
+        deviceName = text("", 19f, bold = true); names.addView(deviceName)
+        gap(names, 5); connection = text("", 12f, muted = true); names.addView(connection)
+        castButton = MediaRouteButton(this).apply { contentDescription = Strings.get(R.string.choose_cast) }
+        castButton.background=android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius=dp(28).toFloat(); setColor(if(light) 0xffd0f1e5.toInt() else 0xff193f36.toInt())
+        }
+        deviceRow.addView(castButton, LinearLayout.LayoutParams(dp(56),dp(56)))
+        names.setPadding(dp(14),0,0,0)
+        deviceRow.addView(names,LinearLayout.LayoutParams(0,-2,1f))
+        device.addView(deviceRow)
+        permissionButton = button(Strings.get(R.string.allow_lan)) { requestPermissions(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"), 3) }
+        device.addView(permissionButton, LinearLayout.LayoutParams(-1,dp(48)))
+        val deviceCard=card(device).apply { setOnClickListener { chooseCast() }; contentDescription=Strings.get(R.string.choose_cast) }
+        deviceName.setOnClickListener { chooseCast() }; names.setOnClickListener { chooseCast() }
+        deviceRow.setOnClickListener { chooseCast() }
+        root.addView(deviceCard)
+        gap(root, 10)
+
+        val metrics = row()
+        fun metric(title: String, icon:Int, green:Boolean=false): Triple<MaterialCardView,TextView,com.google.android.material.progressindicator.LinearProgressIndicator> {
+            val content = column().apply { setPadding(dp(12),dp(12),dp(12),dp(12)) }
+            content.addView(metricHeading(title,icon)); gap(content,9)
+            val value = text("—",21f,bold=true); content.addView(value)
+            gap(content,10)
+            val progress=com.google.android.material.progressindicator.LinearProgressIndicator(this).apply {
+                max=100; trackThickness=dp(5); trackCornerRadius=dp(3); trackStopIndicatorSize=0
+                setIndicatorColor(if(green) 0xff20c993.toInt() else color(androidx.appcompat.R.attr.colorPrimary))
+                importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+            }
+            content.addView(progress,LinearLayout.LayoutParams(-1,dp(8)))
+            return Triple(card(content),value,progress)
+        }
+        val buffer = metric(Strings.get(R.string.buffer_title),R.drawable.ic_buffer,true); bufferValue = buffer.second; bufferProgress=buffer.third
+        val delay = metric(Strings.get(R.string.delay_title),R.drawable.ic_clock); delayValue = delay.second; delayProgress=delay.third
+        metrics.addView(buffer.first,LinearLayout.LayoutParams(0,-2,1f))
+        metrics.addView(View(this),LinearLayout.LayoutParams(dp(12),1))
+        metrics.addView(delay.first,LinearLayout.LayoutParams(0,-2,1f))
+        metrics.addView(View(this),LinearLayout.LayoutParams(dp(10),1))
+        val networkBox=column().apply { setPadding(dp(12),dp(12),dp(12),dp(12)) }
+        networkBox.addView(metricHeading(Strings.get(R.string.network_title),R.drawable.ic_wifi)); gap(networkBox,9)
+        networkValue=text("",21f,bold=true); networkBox.addView(networkValue)
+        gap(networkBox,8); network=text("",10f,muted=true); networkBox.addView(network)
+        metrics.addView(card(networkBox),LinearLayout.LayoutParams(0,-2,1f))
+        metrics.post {
+            val cards=(0 until metrics.childCount).map { metrics.getChildAt(it) }.filterIsInstance<MaterialCardView>()
+            val height=cards.maxOfOrNull { it.height } ?: 0
+            cards.forEach { it.minimumHeight=height }
+        }
+        root.addView(metrics,LinearLayout.LayoutParams(-1,-2))
+        gap(root,10)
+        val support=column().apply { setPadding(dp(16),dp(12),dp(16),dp(12)) }
+        support.addView(text(Strings.get(R.string.support_developer),15f,bold=true))
+        gap(support,4)
+        support.addView(text(Strings.get(R.string.support_optional),11f,muted=true))
+        gap(support,8)
+        support.addView(button(Strings.get(R.string.buy_coffee)) { showDonation() },LinearLayout.LayoutParams(-1,dp(48)))
+        root.addView(card(support))
+        setContentView(ScrollView(this).apply { isFillViewport=true; addView(root) })
+        root.setOnApplyWindowInsetsListener { view,insets ->
+            if(Build.VERSION.SDK_INT>=30) {
+                val bars=insets.getInsets(android.view.WindowInsets.Type.systemBars())
+                view.setPadding(dp(20)+bars.left,dp(16)+bars.top,dp(20)+bars.right,dp(24)+bars.bottom)
+            } else view.setPadding(dp(20)+insets.systemWindowInsetLeft,dp(16)+insets.systemWindowInsetTop,dp(20)+insets.systemWindowInsetRight,dp(24)+insets.systemWindowInsetBottom)
+            insets
+        }
+    }
+    private fun toggleRelay() {
+        if(LiveService.running) startService(Intent(this,LiveService::class.java).setAction("STOP"))
+        else { LiveService.selectedUid=-1;LiveService.selectedPackage=null;pendingMode="CAPTURE"; continueStart() }
+    }
+    private fun updateSourceApp() {
+        val allowed=MediaAppInfo.allowed(this)
+        val packages=MediaAppInfo.packages(this)
+        val selected=displayedPackage?.takeIf { it in packages } ?: packages.firstOrNull()
+        val options=(packages+listOfNotNull(LiveService.selectedPackage)).distinct()
+        val signature=options.joinToString()+":"+LiveService.selectedUid
+        if(choiceSignature!=signature) {
+            choiceSignature=signature;captureChoices.removeAllViews()
+            fun choice(pkg:String?) {
+                val app=pkg?.let { runCatching { packageManager.getApplicationInfo(it,0) }.getOrNull() }
+                val chosen=if(pkg==null) LiveService.selectedUid<0 else LiveService.selectedPackage==pkg
+                val label=app?.loadLabel(packageManager)?.toString() ?: Strings.get(R.string.capture_all)
+                val chip=MaterialButton(this).apply {
+                    text=if(chosen) "✓ $label" else label;textSize=12f;isAllCaps=false;cornerRadius=dp(16)
+                    minWidth=0;minimumWidth=0;setPadding(dp(10),0,dp(10),0)
+                    backgroundTintList=android.content.res.ColorStateList.valueOf(if(chosen) color(androidx.appcompat.R.attr.colorPrimary) else color(com.google.android.material.R.attr.colorSurfaceContainerHigh))
+                    setTextColor(if(chosen) color(com.google.android.material.R.attr.colorOnPrimary) else color(com.google.android.material.R.attr.colorOnSurface))
+                    if(app!=null){icon=app.loadIcon(packageManager);iconTint=null;iconSize=dp(24)}
+                    setOnClickListener { LiveService.selectedPackage=pkg;LiveService.selectedUid=app?.uid ?: -1;choiceSignature="";updateSourceApp() }
+                }
+                captureChoices.addView(chip,LinearLayout.LayoutParams(-2,dp(48)).apply { marginEnd=dp(6) })
+            }
+            choice(null);options.forEach { choice(it) }
+        }
+        val info=selected?.let { runCatching { packageManager.getApplicationInfo(it,0) }.getOrNull() }
+        val name=info?.loadLabel(packageManager)?.toString() ?: selected
+        sourceName.text=when {
+            !allowed -> Strings.get(R.string.media_access_needed)
+            name==null -> Strings.get(R.string.no_playing_app)
+            packages.size>1 -> Strings.get(R.string.multiple_playing_apps,name,packages.size-1)
+            else -> name
+        }
+        sourceDetail.text=if(name!=null) Strings.get(R.string.playing_in_app,name) else ""
+        sourceDetail.visibility=if(name!=null) View.VISIBLE else View.GONE
+        openSource.visibility=if(selected!=null) View.VISIBLE else View.GONE
+        mediaAccess.visibility=if(allowed) View.GONE else View.VISIBLE
+        if(displayedPackage!=selected || sourceIcon.drawable==null) {
+            sourceIcon.setImageDrawable(info?.loadIcon(packageManager) ?: androidx.appcompat.content.res.AppCompatResources.getDrawable(this,R.drawable.ic_apps))
+            sourceIcon.imageTintList=if(info==null) android.content.res.ColorStateList.valueOf(color(com.google.android.material.R.attr.colorOnSurfaceVariant)) else null
+            displayedPackage=selected
+        }
+    }
+    private fun chooseCast() {
+        if(!localAllowed()) { requestPermissions(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"),3); return }
+        if(castButtonReady) castButton.performClick()
+        else { CastController.init(this); Toast.makeText(this,Strings.get(R.string.cast_waiting),Toast.LENGTH_SHORT).show() }
+    }
+    private fun openPlayingApp() {
+        val target=displayedPackage ?: return
+        try {
+            val launch=packageManager.getLaunchIntentForPackage(target)
+            if(launch!=null) startActivity(launch) else Toast.makeText(this,Strings.get(R.string.app_unavailable),Toast.LENGTH_SHORT).show()
+        } catch(_:Exception) { Toast.makeText(this,Strings.get(R.string.app_unavailable),Toast.LENGTH_SHORT).show() }
+    }
+    private fun metricHeading(label:String,drawable:Int)=row().apply {
+        gravity=Gravity.CENTER_VERTICAL
+        addView(ImageView(this@MainActivity).apply {
+            setImageResource(drawable); imageTintList=android.content.res.ColorStateList.valueOf(color(com.google.android.material.R.attr.colorOnSurfaceVariant))
+            importantForAccessibility=View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        },LinearLayout.LayoutParams(dp(18),dp(18)))
+        addView(text(label,11f,muted=true).apply { setPadding(dp(6),0,0,0) },LinearLayout.LayoutParams(0,-2,1f))
+    }
+    private fun showMediaAccess() {
+        sourceDialog?.dismiss()
+        sourceDialog=MaterialAlertDialogBuilder(this).setTitle(Strings.get(R.string.media_access_settings))
+            .setMessage(Strings.get(R.string.media_access_explanation))
+            .setPositiveButton(Strings.get(R.string.open_settings)) { _,_ ->
+                try {
+                    startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_DETAIL_SETTINGS)
+                        .putExtra(android.provider.Settings.EXTRA_NOTIFICATION_LISTENER_COMPONENT_NAME,
+                            android.content.ComponentName(this,MediaAccessService::class.java).flattenToString()))
+                } catch(_:android.content.ActivityNotFoundException) {
+                    startActivity(Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                }
+            }.setNegativeButton(Strings.get(R.string.close),null).show()
+    }
+    private fun showSettings() {
+        val dialog = BottomSheetDialog(this)
+        settingsDialog?.dismiss(); settingsDialog = dialog
+        val body = column().apply { setPadding(dp(24),dp(16),dp(24),dp(32)) }
+        val heading = row().apply { gravity=Gravity.CENTER_VERTICAL }
+        heading.addView(text(Strings.get(R.string.settings),22f,bold=true),LinearLayout.LayoutParams(0,-2,1f))
+        heading.addView(iconButton(Strings.get(R.string.close), R.drawable.ic_close) { dialog.dismiss() },LinearLayout.LayoutParams(dp(48),dp(48))); body.addView(heading)
+        gap(body,16)
+        body.addView(text(Strings.get(R.string.appearance),15f,bold=true))
+        val themeModes=intArrayOf(-1,1,2)
+        val themeLabels=arrayOf(Strings.get(R.string.system_theme),Strings.get(R.string.light_theme),Strings.get(R.string.dark_theme))
+        val currentTheme=themeModes.indexOf(prefs.getInt("theme",-1)).coerceAtLeast(0)
+        body.addView(button(themeLabels[currentTheme]) {
+            languageDialog=MaterialAlertDialogBuilder(this).setTitle(Strings.get(R.string.appearance))
+                .setSingleChoiceItems(themeLabels,currentTheme) { picker,index ->
+                    picker.dismiss(); dialog.dismiss()
+                    prefs.edit().putInt("theme",themeModes[index]).apply()
+                    androidx.appcompat.app.AppCompatDelegate.setDefaultNightMode(themeModes[index])
+                }.setNegativeButton(Strings.get(R.string.close),null).show()
+        },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,16)
+        body.addView(text(Strings.get(R.string.language),15f,bold=true))
+        val languageTags = arrayOf("", "ko", "en")
+        val currentLanguage = androidx.appcompat.app.AppCompatDelegate.getApplicationLocales().get(0)?.language ?: ""
+        val languageLabels = arrayOf(Strings.get(R.string.system_language), "한국어", "English")
+        body.addView(button(languageLabels[languageTags.indexOf(currentLanguage).coerceAtLeast(0)]) {
+            languageDialog = MaterialAlertDialogBuilder(this).setTitle(Strings.get(R.string.language))
+                .setSingleChoiceItems(languageLabels,languageTags.indexOf(currentLanguage).coerceAtLeast(0)) { picker,index ->
+                    picker.dismiss(); dialog.dismiss()
+                    androidx.appcompat.app.AppCompatDelegate.setApplicationLocales(androidx.core.os.LocaleListCompat.forLanguageTags(languageTags[index]))
+                }.setNegativeButton(Strings.get(R.string.close),null).show()
+        },LinearLayout.LayoutParams(-1,dp(48)))
+        body.addView(text(Strings.get(R.string.language_hint),11f,muted=true))
+        gap(body,12)
+        fun toggle(label:String,key:String,default:Boolean) {
+            body.addView(MaterialSwitch(this).apply {
+                text=label; textSize=14f; isChecked=prefs.getBoolean(key,default); minHeight=dp(52)
+                setOnCheckedChangeListener { _,checked ->
+                    prefs.edit().putBoolean(key,checked).apply()
+                    if(key=="remember"&&!checked) prefs.edit().remove("routeId").remove("routeName").apply()
+                    if(key=="auto"&&checked) { CastController.discovery(false); CastController.discovery(localAllowed()) }
+                }
+            },LinearLayout.LayoutParams(-1,-2))
+        }
+        toggle(Strings.get(R.string.remember),"remember",true)
+        toggle(Strings.get(R.string.auto_connect),"auto",false)
+        gap(body,18); body.addView(text(Strings.get(R.string.stream_quality),15f,bold=true)); gap(body,8)
+        val rates=intArrayOf(128000,192000,256000,320000)
+        val bitrateRange = runCatching {
+            android.media.MediaCodecList(android.media.MediaCodecList.REGULAR_CODECS).codecInfos
+                .first { it.isEncoder && it.supportedTypes.any { type -> type.equals("audio/mp4a-latm", true) } }
+                .getCapabilitiesForType("audio/mp4a-latm").audioCapabilities?.bitrateRange
+        }.getOrNull()
+        val group=MaterialButtonToggleGroup(this).apply { isSingleSelection=true; isSelectionRequired=true }
+        val ids= mutableMapOf<Int,Int>()
+        rates.forEach { rate ->
+            val item=button("${rate/1000}") {}.apply { id=View.generateViewId(); minWidth=0; setPadding(0,0,0,0); isEnabled=bitrateRange?.contains(rate) ?: (rate<=256000); contentDescription="${rate/1000} kbps" }
+            ids[item.id]=rate; group.addView(item,LinearLayout.LayoutParams(0,dp(48),1f))
+            if(rate==prefs.getInt("bitrate",192000)) group.check(item.id)
+        }
+        group.addOnButtonCheckedListener { _,id,checked -> if(checked) ids[id]?.let { prefs.edit().putInt("bitrate",it).apply() } }
+        body.addView(group)
+        gap(body,6)
+        body.addView(text(Strings.get(R.string.quality_caption),11f,muted=true))
+        gap(body,18)
+        val seconds=prefs.getInt("buffer",15).coerceIn(15,30)
+        val bufferLabel=text(Strings.get(R.string.delay_setting,seconds),15f,bold=true); body.addView(bufferLabel)
+        body.addView(Slider(this).apply {
+            valueFrom=15f; valueTo=30f; stepSize=5f; value=seconds.toFloat(); contentDescription=Strings.get(R.string.buffer_delay)
+            setLabelFormatter { Strings.get(R.string.seconds,it.toInt()) }
+            addOnChangeListener { _,value,fromUser -> if(fromUser) { prefs.edit().putInt("buffer",value.toInt()).apply(); bufferLabel.text=Strings.get(R.string.delay_setting,value.toInt()) } }
+        })
+        body.addView(text(Strings.get(R.string.next_start),12f,muted=true))
+        gap(body,12)
+        body.addView(button(Strings.get(R.string.media_access_settings)) { dialog.dismiss(); showMediaAccess() },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,20); body.addView(text(Strings.get(R.string.connection_diagnostics),15f,bold=true)); gap(body,8)
+        body.addView(button(Strings.get(R.string.retry_cast)) { CastController.manualRetry(); dialog.dismiss() },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,6)
+        body.addView(button(Strings.get(R.string.copy_url)) {
+            val address=LiveService.streamUrl
+            if(address==null) Toast.makeText(this,Strings.get(R.string.url_not_ready),Toast.LENGTH_SHORT).show()
+            else { copy(address); Toast.makeText(this,Strings.get(R.string.url_copied),Toast.LENGTH_SHORT).show() }
+        },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,6)
+        body.addView(button(Strings.get(R.string.error_logs)) { showLogs() },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,16)
+        body.addView(button(Strings.get(R.string.test_sample)) { dialog.dismiss(); pendingMode="SAMPLE"; continueStart() }.apply { isEnabled=!LiveService.running },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,12)
+        body.addView(text(Strings.get(R.string.mute_hint),12f,muted=true))
+        gap(body,16)
+        body.addView(button(Strings.get(R.string.privacy_policy)) { showPrivacyPolicy() },LinearLayout.LayoutParams(-1,dp(48)))
+        gap(body,20)
+        val packageInfo=packageManager.getPackageInfo(packageName,0)
+        body.addView(text(Strings.get(R.string.app_version,packageInfo.versionName ?: "",packageInfo.longVersionCode),12f,muted=true))
+        dialog.setContentView(androidx.core.widget.NestedScrollView(this).apply { addView(body) })
+        // Let gestures scroll settings immediately instead of expanding the sheet first.
+        dialog.behavior.apply {
+            isDraggable=false
+            isDraggableOnNestedScroll=false
+            skipCollapsed=true
+            state=com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        }
+        dialog.show()
+    }
+    private fun showDonation() {
+        donationDialog?.dismiss()
+        val dialog=BottomSheetDialog(this)
+        donationDialog=dialog
+        val body=column().apply { setPadding(dp(24),dp(16),dp(24),dp(24)) }
+        val heading=row().apply { gravity=Gravity.CENTER_VERTICAL }
+        heading.addView(text(Strings.get(R.string.support_developer),20f,bold=true),LinearLayout.LayoutParams(0,-2,1f))
+        heading.addView(iconButton(Strings.get(R.string.close),R.drawable.ic_close) { dialog.dismiss() },LinearLayout.LayoutParams(dp(48),dp(48)))
+        body.addView(heading)
+        body.addView(text(Strings.get(R.string.support_optional),12f,muted=true))
+        gap(body,12)
+        val choices=intArrayOf(R.string.coffee_one,R.string.coffee_five,R.string.coffee_cake)
+        val links=intArrayOf(R.string.donation_url_2,R.string.donation_url_10,R.string.donation_url_20)
+        choices.forEachIndexed { index,label ->
+            val url=DonationLinks.validated(getString(links[index]))
+            body.addView(button(Strings.get(label)) {
+                if(url!=null) try {
+                    startActivity(Intent(Intent.ACTION_VIEW,android.net.Uri.parse(url)).addCategory(Intent.CATEGORY_BROWSABLE))
+                    dialog.dismiss()
+                } catch(_:android.content.ActivityNotFoundException) {
+                    Toast.makeText(this,Strings.get(R.string.no_browser),Toast.LENGTH_SHORT).show()
+                }
+            }.apply { isEnabled=url!=null },LinearLayout.LayoutParams(-1,dp(52)))
+            gap(body,6)
+        }
+        body.addView(text(Strings.get(if(links.any { DonationLinks.validated(getString(it))!=null }) R.string.support_external else R.string.support_unconfigured),12f,muted=true))
+        dialog.setContentView(androidx.core.widget.NestedScrollView(this).apply { addView(body) })
+        dialog.behavior.apply {
+            isDraggable=false
+            isDraggableOnNestedScroll=false
+            state=com.google.android.material.bottomsheet.BottomSheetBehavior.STATE_EXPANDED
+        }
+        dialog.show()
+    }
+    private fun showPrivacyPolicy() {
+        val policy=resources.openRawResource(R.raw.privacy_policy).bufferedReader(Charsets.UTF_8).use { it.readText() }
+        val content=text(policy,14f).apply {
+            setPadding(dp(24),dp(12),dp(24),dp(24))
+            setTextIsSelectable(true)
+            android.text.util.Linkify.addLinks(this,android.text.util.Linkify.WEB_URLS or android.text.util.Linkify.EMAIL_ADDRESSES)
+        }
+        privacyDialog?.dismiss()
+        privacyDialog=MaterialAlertDialogBuilder(this).setTitle(Strings.get(R.string.privacy_policy))
+            .setView(androidx.core.widget.NestedScrollView(this).apply { addView(content) })
+            .setPositiveButton(Strings.get(R.string.close),null).show()
+    }
+    private fun showLogs() {
+        Diagnostics.save()
+        val content=text("${LiveService.status}\n\n${Diagnostics.text().ifEmpty { Strings.get(R.string.no_logs) }}",12f).apply { setPadding(dp(16),dp(12),dp(16),dp(12)); setTextIsSelectable(true) }
+        logsDialog?.dismiss()
+        logsDialog = MaterialAlertDialogBuilder(this).setTitle(Strings.get(R.string.logs_title)).setView(ScrollView(this).apply { addView(content) })
+            .setPositiveButton(Strings.get(R.string.close),null).setNeutralButton(Strings.get(R.string.copy)) { _,_ -> copy("${LiveService.status}\n${Diagnostics.text()}") }.show()
+    }
+    private fun column()=LinearLayout(this).apply { orientation=LinearLayout.VERTICAL }
+    private fun row()=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
+    private fun text(value:String,size:Float,muted:Boolean=false,bold:Boolean=false)=TextView(this).apply {
+        text=value; textSize=size
+        setTextColor(color(if(muted) com.google.android.material.R.attr.colorOnSurfaceVariant else com.google.android.material.R.attr.colorOnSurface))
+        if(bold) typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
+    }
+    private fun button(label:String,primary:Boolean=false,click:()->Unit)=MaterialButton(this,null,
+        if(primary) com.google.android.material.R.attr.materialButtonStyle else com.google.android.material.R.attr.materialButtonOutlinedStyle
+    ).apply { text=label; textSize=14f; setOnClickListener { click() }; minHeight=dp(44) }
+    private fun iconButton(label:String, drawable:Int, filled:Boolean=false, click:()->Unit)=button("",filled,click).apply {
+        contentDescription=label; tooltipText=label; setIconResource(drawable)
+        iconGravity=MaterialButton.ICON_GRAVITY_TEXT_START; iconPadding=0; iconSize=dp(24)
+        minWidth=0; minimumWidth=0; setPadding(0,0,0,0)
+        insetTop=0; insetBottom=0; cornerRadius=dp(24)
+        if(!filled) { strokeWidth=0; backgroundTintList=android.content.res.ColorStateList.valueOf(android.graphics.Color.TRANSPARENT) }
+    }
+    private fun card(content:View,primary:Boolean=false)=MaterialCardView(this).apply {
+        radius=dp(12).toFloat(); cardElevation=0f
+        setCardBackgroundColor(color(if(primary) com.google.android.material.R.attr.colorPrimaryContainer else com.google.android.material.R.attr.colorSurfaceContainerLow))
+        strokeWidth=dp(1); strokeColor=if(primary) {
+            if(resources.configuration.uiMode and android.content.res.Configuration.UI_MODE_NIGHT_MASK == android.content.res.Configuration.UI_MODE_NIGHT_YES) 0xff443953.toInt() else 0xffd1c3e2.toInt()
+        } else androidx.core.graphics.ColorUtils.setAlphaComponent(color(com.google.android.material.R.attr.colorOnSurface),24)
+        addView(content,ViewGroup.LayoutParams(-1,-2))
+    }
+    private fun color(attribute:Int)=MaterialColors.getColor(this,attribute,0xff6750a4.toInt())
+    private fun gap(parent:LinearLayout,height:Int) { parent.addView(View(this),LinearLayout.LayoutParams(1,dp(height))) }
+    private fun dp(value:Int)=(value*resources.displayMetrics.density).toInt()
+    private fun formatTime(seconds:Long)=String.format(Locale.US,"%02d:%02d",seconds/60,seconds%60)
+    private fun copy(value:String) { getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText(Strings.get(R.string.app_name),value)) }
+    private fun localAllowed()=Build.VERSION.SDK_INT<37||checkSelfPermission("android.permission.ACCESS_LOCAL_NETWORK")==PackageManager.PERMISSION_GRANTED
+    private fun continueStart() {
+        if(LiveService.running||CaptureService.running) { Toast.makeText(this,Strings.get(R.string.stop_first),Toast.LENGTH_SHORT).show(); pendingMode=null; return }
+        if(!localAllowed()) { requestPermissions(arrayOf("android.permission.ACCESS_LOCAL_NETWORK"),3); return }
+        if(pendingMode=="CAPTURE"&&checkSelfPermission(Manifest.permission.RECORD_AUDIO)!=PackageManager.PERMISSION_GRANTED) { requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO),1); return }
+        if(Build.VERSION.SDK_INT>=33&&!notificationAsked&&checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS)!=PackageManager.PERMISSION_GRANTED) { notificationAsked=true; requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS),2); return }
+        if(pendingMode=="SAMPLE") { startForegroundService(Intent(this,LiveService::class.java).setAction("SAMPLE")); pendingMode=null }
+        else if(pendingMode=="CAPTURE") {
+            val manager=getSystemService(MediaProjectionManager::class.java)
+            val intent=if(Build.VERSION.SDK_INT>=34) manager.createScreenCaptureIntent(android.media.projection.MediaProjectionConfig.createConfigForDefaultDisplay()) else manager.createScreenCaptureIntent()
+            startActivityForResult(intent,10)
+        }
+    }
+    override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if(requestCode==2||grantResults.firstOrNull()==PackageManager.PERMISSION_GRANTED) { CastController.discovery(localAllowed()); if(pendingMode!=null) continueStart() }
+        else { pendingMode=null; Toast.makeText(this,Strings.get(R.string.permission_needed),Toast.LENGTH_LONG).show() }
+    }
+    override fun onActivityResult(requestCode:Int,resultCode:Int,data:Intent?) {
+        super.onActivityResult(requestCode,resultCode,data)
+        if(requestCode==10) { pendingMode=null; if(resultCode==RESULT_OK&&data!=null) startForegroundService(Intent(this,LiveService::class.java).setAction("CAPTURE").putExtra("consent",data).putExtra("code",resultCode)) }
+    }
+    override fun onSaveInstanceState(outState:Bundle) { outState.putString("pendingMode",pendingMode); outState.putBoolean("notificationAsked",notificationAsked); super.onSaveInstanceState(outState) }
+    override fun onResume() { super.onResume(); LiveService.levels.setEnabled(true); handler.post(refresh); handler.post(visuals); CastController.discovery(localAllowed()) }
+    override fun onPause() { LiveService.levels.setEnabled(false); handler.removeCallbacks(refresh); handler.removeCallbacks(visuals); CastController.discovery(false); super.onPause() }
+    override fun onDestroy() { settingsDialog?.dismiss(); languageDialog?.dismiss(); sourceDialog?.dismiss(); logsDialog?.dismiss(); privacyDialog?.dismiss(); donationDialog?.dismiss(); super.onDestroy() }
+}
+
+
+

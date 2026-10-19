@@ -1,0 +1,30 @@
+AudioCast Privacy Policy
+Prepared: October 19, 2026
+Developer: Synthetic Resin
+Contact: potothewer123@gmail.com
+
+1. Purpose and account information
+AudioCast sends capture-permitted media audio playing on your phone to a Cast device you choose on your local network. It has no account registration and does not request your name, email, contacts, payment details, or Suno credentials. There is no developer-operated collection server, advertising SDK, or separate analytics SDK. Google Cast SDK processing is described in section 5.
+
+2. Audio capture and transmission
+After you start relaying and approve Android audio permission and capture consent, the app reads media playback using AudioPlaybackCapture. It does not record ambient microphone audio or save or transmit screen video. The current capture filter includes audio classified as USAGE_MEDIA and permitted by its source app. Audio classified as calls or notifications is excluded.
+Relaying continues while the screen is off or another app is open. Stop it using the app or its ongoing notification. Audio is processed in a bounded memory buffer; ordinary relaying creates no recording files. Older segments are discarded as the buffer advances. Remaining memory after service termination is released or replaced when the process ends or a new service initializes. Receiver playback buffers are managed by the receiving device.
+
+3. Local network and security
+Wi-Fi addresses and Cast device information are used for discovery, connection, and transmission. Audio is served from the phone's local HTTP server, not uploaded to a developer server. Local HTTP audio traffic is not encrypted. A random token is part of the stream URL, but it does not replace encryption. Use a trusted private network and do not share stream URLs. Devices on that network that know the URL can access audio while relaying is active.
+
+4. Playing app display and optional notification access
+If you grant notification access, the app queries active local media sessions and related package names and icons on the device to display playing apps and select an app-specific audio filter. This access is optional; all-media relaying remains available without it. The app does not use code to read or store ordinary notification titles, bodies, messages, or contacts. Revoke notification access in Android settings. Identifying a playing app does not establish that its audio can be captured.
+
+5. Google Cast SDK
+Discovery and connection use the Google Cast Android Sender SDK and Google Play services. Google's documentation states that the SDK can transmit anonymous discovery/session events, mobile device information, and client app information to Google's log servers using encryption. This information supports SDK usage and performance analysis and defect detection. The SDK provides no separate collection opt-out or deletion mechanism to the app or its users. The app does not directly control Google's retention or deletion.
+Official disclosure: https://developers.google.com/cast/docs/android_sender/data_disclosure
+Google Privacy Policy: https://policies.google.com/privacy
+
+6. Local retention and deletion
+Language, appearance, audio quality, buffer preferences, and remembered Cast device identifiers are stored within the app. Up to 250 recent diagnostic lines are held in memory. Opening logs or ending a service overwrites an internal diagnostic file. Logs may contain errors, stream URLs, network details, and selected app UIDs. Logs are not automatically sent to the developer. Check for sensitive URLs before copying or sharing them.
+WAV files created by the early capture verification feature may remain from older versions. The current ordinary relay screen does not invoke that recording feature. Clear app storage in Android settings or uninstall the app to remove its internal files and preferences. App cloud backup is disabled. Copies you export must be deleted at their destination. Google SDK data is subject to section 5.
+
+7. Contact and changes
+For questions about privacy, contact potothewer123@gmail.com. When processing changes, this policy and its date will be updated, with additional notices or consent where needed.
+
