@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Enable only after the developer supplies verified, one-time checkout links. -->
-    <string name="donation_url_2" translatable="false"></string>
-    <string name="donation_url_10" translatable="false"></string>
-    <string name="donation_url_20" translatable="false"></string>
-</resources>

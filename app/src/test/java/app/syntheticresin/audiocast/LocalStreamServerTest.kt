@@ -32,7 +32,7 @@ class LocalStreamServerTest {
             }
             assertEquals(404, request("other/live.m3u8").first)
             assertEquals(503, request("secret/live.m3u8").first)
-            repeat(4) { hls.publish(HlsStream.adts(byteArrayOf(1,2,3)), 188, it * 4010666L) }
+            repeat(6) { hls.publish(HlsStream.adts(byteArrayOf(1,2,3)), 47, it * 1002667L) }
             val playlist = request("secret/live.m3u8")
             assertEquals(200, playlist.first); assertTrue(String(playlist.second).startsWith("#EXTM3U"))
             assertEquals(200, request("secret/seg-0.aac").first)

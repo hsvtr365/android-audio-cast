@@ -1,0 +1,53 @@
+{
+  "da": {
+    "settings_audio": "Lydindstillinger",
+    "settings_remember": "Husk seneste enhed",
+    "open_wifi_settings": "Åbn Wi-Fi-indstillinger",
+    "source_selection": "Lydkilde"
+  },
+  "el": {
+    "settings_about": "Πληροφορίες εφαρμογής",
+    "settings_auto_hint": "Σύνδεση με την αποθηκευμένη συσκευή στο ίδιο Wi-Fi",
+    "settings_bitrate_value": "%1$d kbps · AAC",
+    "settings_quality_hint": "Οι υψηλότεροι ρυθμοί χρησιμοποιούν περισσότερα δεδομένα · ισχύει στην επόμενη έναρξη αναμετάδοσης",
+    "settings_delay_short": "Μικρότερη καθυστέρηση",
+    "settings_delay_buffer": "Μεγάλη καθυστέρηση",
+    "wifi_connected_status": "Συνδεδεμένο σε Wi-Fi",
+    "auto_connect_hint": "Όταν ανοίγετε ή επιστρέφετε στην εφαρμογή, αναζητά την τελευταία συσκευή ή ομάδα και προσπαθεί να επανασυνδεθεί. Η αποθήκευση της τελευταίας συσκευής ή ομάδας πρέπει επίσης να είναι ενεργή και η συσκευή να μπορεί να εντοπιστεί στο ίδιο Wi-Fi. Η μουσική και η αναμετάδοση δεν ξεκινούν αυτόματα. Πατήστε Έναρξη αναμετάδοσης και εγκρίνετε τη λήψη ήχου.",
+    "same_wifi_question": "Είστε συνδεδεμένοι στο ίδιο Wi-Fi με την έξυπνη συσκευή σας;",
+    "connect_speaker_description": "Συνδέστε μια συσκευή ή ομάδα από την κάρτα συσκευών παρακάτω.",
+    "capture_all_hint": "Αναμετάδοση όλου του ήχου που μπορεί να καταγραφεί σε αυτό το τηλέφωνο.",
+    "relay_buffer_value": "Buffer %1$s"
+  },
+  "hi": {
+    "settings_audio": "ऑडियो सेटिंग",
+    "speaker_sending": "डिवाइसों पर भेजा जा रहा है",
+    "relay_buffer_value": "बफ़र %1$s"
+  },
+  "ja": {
+    "speaker_delay_hint": "遅延目標: %1$d 秒 · 実際の遅延はデバイスによって異なります。"
+  },
+  "lt": {
+    "settings_advanced": "Išplėstiniai nustatymai",
+    "settings_notification_access": "Leisti prieigą prie pranešimų",
+    "relay_waiting_speaker": "Laukiama įrenginio",
+    "open_source_app": "Atidaryti %1$s"
+  },
+  "lv": {
+    "settings_about": "Informācija par lietotni",
+    "settings_auto": "Automātiski atjaunot savienojumu",
+    "settings_delay_short": "Īsāka aizture",
+    "settings_delay_buffer": "Ilga aizture",
+    "open_google_home": "Atsevišķs skaļums · Atvērt Google Home",
+    "speaker_sending": "Sūta uz ierīcēm"
+  },
+  "ml": {
+    "settings_permissions": "അനുമതി ക്രമീകരണങ്ങൾ",
+    "source_selection": "ഓഡിയോ ഉറവിടം",
+    "open_source_app": "%1$s തുറക്കുക",
+    "speaker_required_hint": "ഓഡിയോ കേൾക്കാൻ ഒരു ഉപകരണമോ ഗ്രൂപ്പോ ബന്ധിപ്പിക്കുക."
+  },
+  "sv": {
+    "settings_auto_hint": "Anslut till den sparade enheten via samma Wi-Fi"
+  }
+}

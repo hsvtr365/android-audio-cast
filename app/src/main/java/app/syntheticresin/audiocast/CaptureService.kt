@@ -52,7 +52,7 @@ class CaptureService : Service() {
         val file = File(filesDir, "capture-${System.currentTimeMillis()}.wav")
         try {
             if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                throw SecurityException("오디오 캡처 권한이 없습니다")
+                throw SecurityException("오디오 캡처 권한이 없어요")
             }
             val config = AudioPlaybackCaptureConfiguration.Builder(projection!!).addMatchingUsage(AudioAttributes.USAGE_MEDIA).build()
             val format = AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(48000).setChannelMask(AudioFormat.CHANNEL_IN_STEREO).build()
@@ -81,7 +81,7 @@ class CaptureService : Service() {
                     Log.i("CastPoc", status.replace('\n', ' ')); last = now; peak = 0; energy = 0.0; window = 0
                 }
             }
-            status = "저장 완료: ${file.name}\n${bytes / 192000.0}초 · $bytes bytes\n비영점 샘플 $nonzero / $total\n무음만으로 원본 앱 차단을 단정할 수 없습니다."
+            status = "저장 완료: ${file.name}\n${bytes / 192000.0}초 · $bytes bytes\n비영점 샘플 $nonzero / $total\n무음만으로 원본 앱 차단을 단정할 수 없어요."
         } catch (e: Exception) { status = "캡처 오류: ${e.message}"; Log.e("CastPoc", status, e) }
         finally {
             running = false

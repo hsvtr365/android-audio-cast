@@ -12,6 +12,10 @@ build/
 
 # Local configuration file (sdk path, etc)
 local.properties
+signing.properties
+*.jks
+*.keystore
+*.p12
 
 # Kotlin
 .kotlin/

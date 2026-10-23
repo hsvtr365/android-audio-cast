@@ -25,6 +25,9 @@ Google Privacy Policy: https://policies.google.com/privacy
 Language, appearance, audio quality, buffer preferences, and remembered Cast device identifiers are stored within the app. Up to 250 recent diagnostic lines are held in memory. Opening logs or ending a service overwrites an internal diagnostic file. Logs may contain errors, stream URLs, network details, and selected app UIDs. Logs are not automatically sent to the developer. Check for sensitive URLs before copying or sharing them.
 WAV files created by the early capture verification feature may remain from older versions. The current ordinary relay screen does not invoke that recording feature. Clear app storage in Android settings or uninstall the app to remove its internal files and preferences. App cloud backup is disabled. Copies you export must be deleted at their destination. Google SDK data is subject to section 5.
 
-7. Contact and changes
+7. Purchases
+Version 0.41 temporarily disables all Supporter purchases. This release includes no Google Play Billing library, purchase flow, or purchase restoration requests. Existing local badge preferences from older versions are retained but not displayed. Google retains earlier transaction records under its own policies.
+
+8. Contact and changes
 For questions about privacy, contact potothewer123@gmail.com. When processing changes, this policy and its date will be updated, with additional notices or consent where needed.
 

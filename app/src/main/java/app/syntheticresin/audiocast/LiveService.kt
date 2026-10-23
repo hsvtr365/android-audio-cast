@@ -30,7 +30,7 @@ class LiveService : Service() {
         @Volatile var elapsedSeconds = 0L
         @Volatile var inputDbfs = -120.0
         @Volatile var bufferedSeconds = 0.0
-        @Volatile var targetDelay = 15
+        @Volatile var targetDelay = 6
         @Volatile var qualityBitrate = 192000
         @Volatile var sampleMode = false
         @Volatile var captureActive = false
@@ -42,6 +42,7 @@ class LiveService : Service() {
             return wifi?.let { cm.getLinkProperties(it)?.linkAddresses?.firstOrNull { address -> address.address is Inet4Address && !address.address.isLoopbackAddress }?.address?.hostAddress }
         }
     }
+    private var relaySession: android.support.v4.media.session.MediaSessionCompat? = null
     private val main = Handler(Looper.getMainLooper())
     private var worker: Thread? = null
     @Volatile private var active = false
@@ -65,7 +66,7 @@ class LiveService : Service() {
         override fun run() {
             if (!active) return
             if (server?.healthy != true || SystemClock.elapsedRealtime()-lastNetworkCheck>=10000) refreshNetwork()
-            val requested=getSharedPreferences("settings",0).getInt("buffer",15).coerceIn(15,30)
+            val requested=getSharedPreferences("settings",0).getInt("buffer",6).coerceIn(6,30)
             if(requested!=hls.bufferSeconds) {
                 hls.updateBufferSeconds(requested); targetDelay=requested
                 bufferedSeconds=hls.bufferDuration(); CastController.streamChanged()
@@ -73,6 +74,14 @@ class LiveService : Service() {
             }
             ready = hls.ready() && server?.healthy == true
             CastController.tick(streamUrl, ready)
+            relaySession?.apply {
+                isActive = !CastController.isConnected
+                setPlaybackState(android.support.v4.media.session.PlaybackStateCompat.Builder()
+                    .setActions(android.support.v4.media.session.PlaybackStateCompat.ACTION_STOP)
+                    .setState(if (ready) android.support.v4.media.session.PlaybackStateCompat.STATE_PLAYING
+                        else android.support.v4.media.session.PlaybackStateCompat.STATE_BUFFERING,
+                        android.support.v4.media.session.PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f).build())
+            }
             main.postDelayed(this, 2000)
         }
     }
@@ -88,11 +97,31 @@ class LiveService : Service() {
             val nm = getSystemService(NotificationManager::class.java)
             nm.createNotificationChannel(NotificationChannel("relay", Strings.get(R.string.app_name), NotificationManager.IMPORTANCE_LOW))
             val stop = PendingIntent.getService(this, 20, Intent(this, LiveService::class.java).setAction("STOP"), PendingIntent.FLAG_IMMUTABLE)
+            relaySession = android.support.v4.media.session.MediaSessionCompat(this, "AudioCast relay").apply {
+                setMetadata(android.support.v4.media.MediaMetadataCompat.Builder()
+                    .putString(android.support.v4.media.MediaMetadataCompat.METADATA_KEY_TITLE,
+                        Strings.get(if (sample) R.string.sample_notification else R.string.capture_notification)).build())
+                setCallback(object : android.support.v4.media.session.MediaSessionCompat.Callback() {
+                    override fun onStop() {
+                        startService(Intent(this@LiveService, LiveService::class.java).setAction("STOP"))
+                    }
+                })
+                setPlaybackState(android.support.v4.media.session.PlaybackStateCompat.Builder()
+                    .setActions(android.support.v4.media.session.PlaybackStateCompat.ACTION_STOP)
+                    .setState(android.support.v4.media.session.PlaybackStateCompat.STATE_BUFFERING,
+                        android.support.v4.media.session.PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f).build())
+                isActive = true
+            }
+            androidx.mediarouter.media.MediaRouter.getInstance(this).setMediaSessionCompat(relaySession)
             val notification = Notification.Builder(this, "relay").setSmallIcon(R.drawable.ic_relay_notification)
                 .setContentTitle(if (sample) Strings.get(R.string.sample_notification) else Strings.get(R.string.capture_notification))
                 .setContentText(Strings.get(R.string.notification_body))
                 .setContentIntent(PendingIntent.getActivity(this, 20, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
-                .addAction(Notification.Action.Builder(null, Strings.get(R.string.stop), stop).build()).setOngoing(true).build()
+                .addAction(Notification.Action.Builder(null, Strings.get(R.string.stop), stop).build())
+                .setStyle(Notification.MediaStyle()
+                    .setMediaSession(relaySession!!.sessionToken.token as android.media.session.MediaSession.Token)
+                    .setShowActionsInCompactView(0))
+                .setOngoing(true).build()
             startForeground(20, notification, if (sample) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             foregroundActive = true
             levels.clear(); captureActive = false
@@ -103,7 +132,7 @@ class LiveService : Service() {
                 }, main)
             }
             val prefs = getSharedPreferences("settings", 0)
-            hls = HlsStream(prefs.getInt("buffer", 15).coerceIn(15, 30))
+            hls = HlsStream(prefs.getInt("buffer", 6).coerceIn(6, 30))
             elapsedSeconds = 0; inputDbfs = -120.0; bufferedSeconds = 0.0
             targetDelay = hls.bufferSeconds; qualityBitrate = prefs.getInt("bitrate", 192000); sampleMode = sample
             active = true; running = true; ready = false; status = Strings.get(R.string.encoder_starting)
@@ -224,7 +253,7 @@ class LiveService : Service() {
                         val raw = ByteArray(info.size); out.get(raw)
                         if (segmentFrames == 0) segmentPts = info.presentationTimeUs
                         encoded.write(HlsStream.adts(raw)); segmentFrames++
-                        if (segmentFrames >= 188) {
+                        if (segmentFrames >= HlsStream.SEGMENT_FRAMES) {
                             hls.publish(encoded.toByteArray(), segmentFrames, segmentPts)
                             encoded.reset(); segmentFrames = 0
                             Diagnostics.log("HLS sequence=${hls.latestSequence()} buffer=${"%.1f".format(java.util.Locale.US, hls.bufferDuration())} retained=${hls.retainedCount()}")
@@ -265,7 +294,9 @@ class LiveService : Service() {
         if (callbackRegistered) getSystemService(ConnectivityManager::class.java).unregisterNetworkCallback(network)
         server?.close(); server = null; streamUrl = null
         projection?.stop(); if (wake?.isHeld == true) wake?.release()
-        CastController.stopMedia(); Diagnostics.save()
+        CastController.stopMedia()
+        relaySession?.release(); relaySession = null
+        Diagnostics.save()
         super.onDestroy()
     }
 }

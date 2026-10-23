@@ -1,4 +1,4 @@
+<!-- Google Material Icons Outlined, Apache-2.0. Source: https://raw.githubusercontent.com/google/material-design-icons/master/src/av/volume_up/materialiconsoutlined/24px.svg -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
-    <path android:fillColor="#FFFFFF" android:pathData="M3,9 L7,9 L12,5 L12,19 L7,15 L3,15 Z" />
-    <path android:fillColor="#00000000" android:strokeColor="#FFFFFF" android:strokeWidth="1.7" android:strokeLineCap="round" android:pathData="M16,9 Q19,12 16,15 M19,6 Q25,12 19,18" />
+    <path android:fillColor="#FF000000" android:pathData="M3 9v6h4l5 5V4L7 9H3zm7-.17v6.34L7.83 13H5v-2h2.83L10 8.83zM16.5 12c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77 0-4.28-2.99-7.86-7-8.77z" />
 </vector>

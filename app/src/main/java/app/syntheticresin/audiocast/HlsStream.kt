@@ -5,18 +5,18 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** RFC 8216 packed AAC: each segment starts with an ID3 transport timestamp. */
-class HlsStream(bufferSeconds: Int = 15) {
-    init { require(bufferSeconds in 15..30) }
+class HlsStream(bufferSeconds: Int = 6) {
+    init { require(bufferSeconds in 6..30) }
     @Volatile var bufferSeconds: Int = bufferSeconds
         private set
     @Synchronized fun updateBufferSeconds(seconds:Int) {
-        require(seconds in 15..30)
+        require(seconds in 6..30)
         bufferSeconds=seconds
     }
     data class Segment(val sequence: Long, val duration: Double, val data: ByteArray)
     private val segments = ArrayDeque<Segment>()
     private var next = 0L
-    private val windowCount get() = ceil(bufferSeconds / 4.0).toInt() + 3
+    private val windowCount get() = ceil(bufferSeconds / SEGMENT_SECONDS).toInt() + 3
     private val retainCount get() = windowCount * 2 + 2
     @Volatile var ended = false
         private set
@@ -26,7 +26,7 @@ class HlsStream(bufferSeconds: Int = 15) {
         while (segments.size > retainCount) segments.removeFirst()
     }
     @Synchronized fun finish() { ended = true }
-    @Synchronized fun ready() = segments.size >= ceil(bufferSeconds / 4.0).toInt()
+    @Synchronized fun ready() = segments.size >= ceil(bufferSeconds / SEGMENT_SECONDS).toInt()
     @Synchronized fun bufferDuration() = segments.takeLast(windowCount).sumOf { it.duration }
     @Synchronized fun retainedCount() = segments.size
     @Synchronized fun latestSequence() = next - 1
@@ -35,7 +35,7 @@ class HlsStream(bufferSeconds: Int = 15) {
         if (!ready()) return null
         val visible = segments.takeLast(windowCount)
         return buildString {
-            append("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:5\n")
+            append("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n")
             append("#EXT-X-MEDIA-SEQUENCE:${visible.first().sequence}\n")
             append("#EXT-X-START:TIME-OFFSET=-${bufferSeconds.toDouble()},PRECISE=NO\n")
             visible.forEach { append(String.format(Locale.US, "#EXTINF:%.6f,\nseg-%d.aac\n", it.duration, it.sequence)) }
@@ -43,6 +43,8 @@ class HlsStream(bufferSeconds: Int = 15) {
         }.toByteArray(Charsets.UTF_8)
     }
     companion object {
+        const val SEGMENT_FRAMES = 47
+        const val SEGMENT_SECONDS = SEGMENT_FRAMES * 1024.0 / 48000
         fun adts(raw: ByteArray): ByteArray {
             val size = raw.size + 7
             require(size in 8..8191)

@@ -11,8 +11,8 @@ class RelayOptionsProvider : OptionsProvider {
     override fun getCastOptions(context: Context): CastOptions = CastOptions.Builder()
         .setReceiverApplicationId(CastMediaControlIntent.DEFAULT_MEDIA_RECEIVER_APPLICATION_ID)
         .setResumeSavedSession(context.getSharedPreferences("settings", 0).let { it.getBoolean("auto", false) && it.getBoolean("remember", true) })
-        // Source-app playback stays in the source app; our service owns the stop notification.
-        .setCastMediaOptions(CastMediaOptions.Builder().setNotificationOptions(null).setMediaSessionEnabled(false).build())
+        // Expose Cast playback to system routing; our service owns the stop notification.
+        .setCastMediaOptions(CastMediaOptions.Builder().setNotificationOptions(null).setMediaSessionEnabled(true).build())
         .build()
     override fun getAdditionalSessionProviders(context: Context): List<SessionProvider>? = null
 }

@@ -13,23 +13,23 @@ class HostHlsPlaybackTest {
         assumeTrue("Set -PrelayFixture=<ADTS AAC fixture> for the decoder test", fixture.isNotEmpty())
         val source = File(fixture).readBytes()
         var end = 0; var frames = 0
-        while (frames < 188 && end + 7 < source.size) {
+        while (frames < HlsStream.SEGMENT_FRAMES && end + 7 < source.size) {
             require(source[end].toInt() and 255 == 255 && source[end + 1].toInt() and 240 == 240)
             val length = ((source[end+3].toInt() and 3) shl 11) or ((source[end+4].toInt() and 255) shl 3) or ((source[end+5].toInt() and 224) shr 5)
             require(length >= 7 && end + length <= source.size)
             end += length; frames++
         }
-        assertEquals(188, frames)
+        assertEquals(HlsStream.SEGMENT_FRAMES, frames)
         val segment = source.copyOfRange(0, end)
         val hls = HlsStream()
-        repeat(4) { hls.publish(segment, 188, it * 188L * 1024 * 1_000_000 / 48000) }
+        repeat(6) { hls.publish(segment, frames, it * frames.toLong() * 1024 * 1_000_000 / 48000) }
         val active = AtomicBoolean(true)
         val producer = Thread {
-            var sequence = 4L
+            var sequence = 6L
             try {
                 while (active.get()) {
-                    Thread.sleep(4011)
-                    if (active.get()) hls.publish(segment, 188, sequence++ * 188 * 1024 * 1_000_000 / 48000)
+                    Thread.sleep(1002)
+                    if (active.get()) hls.publish(segment, frames, sequence++ * frames * 1024 * 1_000_000 / 48000)
                 }
             } catch (_: InterruptedException) {}
         }

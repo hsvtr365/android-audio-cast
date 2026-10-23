@@ -13,7 +13,7 @@ class AudioRingView(context: Context, @Suppress("UNUSED_PARAMETER") tint: Int) :
     private val focus=doubleArrayOf(.22,.52,.80)
     private val spread=doubleArrayOf(.30,.30,.32)
     private val attack=doubleArrayOf(.085,.045,.020)
-    private val release=doubleArrayOf(.55,.30,.14)
+    private val release=doubleArrayOf(.32,.18,.09)
     private val peakCounts=intArrayOf(6,7,9)
     private val widths=doubleArrayOf(.054,.043,.031)
     private val offsets=doubleArrayOf(-.025,.015,0.0)
@@ -75,7 +75,7 @@ class AudioRingView(context: Context, @Suppress("UNUSED_PARAMETER") tint: Int) :
     }
     override fun onDraw(canvas:Canvas) {
         if(gradients.size!=3)return
-        val base=height*.72f
+        val base=height*.64f
         for(layer in 0..2) {
             updateHeights(layer)
             paint.shader=gradients[layer];paint.style=Paint.Style.FILL
@@ -83,7 +83,7 @@ class AudioRingView(context: Context, @Suppress("UNUSED_PARAMETER") tint: Int) :
                 path.rewind();path.moveTo(0f,base)
                 for(i in 0..180) {
                     val t=i/180.0
-                    path.lineTo((width*t).toFloat(),base+heights[i]*(if(reflection==1) .24f else -1f))
+                    path.lineTo((width*t).toFloat(),base+heights[i]*(if(reflection==1) .50f else -1f))
                 }
                 path.lineTo(width.toFloat(),base);path.close()
                 paint.alpha=if(reflection==1) reflectionAlpha[layer] else fillAlpha[layer]

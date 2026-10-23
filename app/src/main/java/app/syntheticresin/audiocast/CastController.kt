@@ -20,6 +20,8 @@ object CastController {
     val status: String get() = statusText()
     private var deviceName: String? = null
     val device: String get() = deviceName ?: Strings.get(R.string.not_selected)
+    val isConnected: Boolean get() = context?.sessionManager?.currentCastSession?.isConnected == true
+    val isConnecting: Boolean get() = context?.sessionManager?.currentCastSession?.isConnecting == true
     private var loadedUrl: String? = null
     private var ownedUrl: String? = null
     private var bufferingSince = 0L
@@ -70,10 +72,6 @@ object CastController {
         val selector = context?.mergedSelector ?: return
         val route = router?.routes?.firstOrNull { it.id == saved && it.isEnabled && it.matchesSelector(selector) } ?: return
         autoTried = true; statusText = { Strings.get(R.string.auto_attempt,route.name) }; route.select()
-    }
-    fun manualRetry() {
-        if (context == null) { app?.let { init(it) }; return }
-        loadedUrl = null; lastAttempt = 0; tick(LiveService.streamUrl, LiveService.ready)
     }
     fun streamChanged() { loadedUrl = null; lastAttempt = 0; bufferingSince = 0 }
     fun tick(url: String?, ready: Boolean) {
