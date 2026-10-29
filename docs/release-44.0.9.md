@@ -8,7 +8,9 @@
 - Signed AAB/APK and Release lint passed. AAB signature verification passed.
 - Current physical phone remains44.0.8; the running session was preserved.
 - New HTTPS receiver launch and44.0.9 installation have not been tested on the phone.
-- Google Play alpha remains0.43 and internal test0.40.44.0.9 has not been uploaded or approved.
+- On 2026-10-30 (KST), signed version 53 (44.0.9) was uploaded to the existing Google Play closed Alpha track and submitted for review.
+- Publishing overview confirms changes under review, with automated checks running. Approval and tester availability are pending; the previously published Alpha remains 0.43 until approval. Internal testing remains 0.40.
+- The only release warning was the absence of a deobfuscation file; no blocking validation error was shown.
 - Production access currently unavailable in the console; closed testing shows12 opted-in testers for9 days.
 
 ## Existing device evidence
