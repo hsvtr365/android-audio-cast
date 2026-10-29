@@ -16,6 +16,16 @@ class AudioSpectrum(enabled: Boolean = true) {
     private val power=DoubleArray(size/2)
     private val window=DoubleArray(size) { 0.5-0.5*cos(2*PI*it/(size-1)) }
     private val levels=FloatArray(24)
+    private val channels = arrayOf(left, right)
+    private data class Band(val from: Int, val until: Int, val weightingDb: Double)
+    // These boundaries depend only on the fixed sample rate and FFT size.
+    private val bands = Array(levels.size) { band ->
+        val low = 60.0 * (16000.0 / 60).pow(band / 24.0)
+        val high = 60.0 * (16000.0 / 60).pow((band + 1) / 24.0)
+        val from = (low * size / 48000).toInt().coerceAtLeast(1)
+        val until = maxOf(from + 1, ceil(high * size / 48000).toInt()).coerceAtMost(size / 2)
+        Band(from, until, (3 * log2(sqrt(low * high) / 1000)).coerceIn(-12.0, 12.0))
+    }
     private var position=0
     private var frames=0
     @Synchronized fun addPcm(pcm:ByteArray,count:Int) {
@@ -30,24 +40,20 @@ class AudioSpectrum(enabled: Boolean = true) {
     }
     private fun analyze() {
         power.fill(0.0)
-        for(channel in arrayOf(left,right)) {
+        for(channel in channels) {
             for(i in 0 until size) { real[i]=channel[(position+i)%size]*window[i]; imaginary[i]=0.0 }
             fft()
             for(i in power.indices) power[i]+=(real[i]*real[i]+imaginary[i]*imaginary[i])/2
         }
         for(band in levels.indices) {
-            val low=60.0*(16000.0/60).pow(band/24.0)
-            val high=60.0*(16000.0/60).pow((band+1)/24.0)
-            val from=(low*size/48000).toInt().coerceAtLeast(1)
-            val until=maxOf(from+1,ceil(high*size/48000).toInt()).coerceAtMost(size/2)
+            val (from, until, weightingDb) = bands[band]
             var sum=0.0
             for(bin in from until until) sum+=power[bin]
             val magnitude=sqrt(sum/(until-from))/(size/4.0)
             val db=if(magnitude>0) 20*log10(magnitude) else -120.0
             // Gentle +3 dB/octave visual weighting offsets music's bass-heavy spectrum.
             // Headroom and an absolute noise floor prevent saturation or amplified silence.
-            val center=sqrt(low*high)
-            val weightedDb=db+(3*log2(center/1000)).coerceIn(-12.0,12.0)
+            val weightedDb=db+weightingDb
             val target=((weightedDb+66)/66).coerceIn(0.0,1.0).pow(1.5).toFloat()
             val blend=if(target>levels[band]) 0.8f else 0.4f
             levels[band]+=(target-levels[band])*blend
