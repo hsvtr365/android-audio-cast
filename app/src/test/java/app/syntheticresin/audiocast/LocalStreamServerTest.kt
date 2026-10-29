@@ -23,15 +23,29 @@ class LocalStreamServerTest {
     }
     @Test fun readinessAuthorizationAndHead() {
         val hls = HlsStream()
-        LocalStreamServer("127.0.0.1", "secret", hls, 0).use { server ->
+        LocalStreamServer("127.0.0.1", "secret", hls, 0, "<audio></audio>".toByteArray()).use { server ->
             fun request(path: String, method: String = "GET"): Pair<Int, ByteArray> {
                 val connection = URL("http://127.0.0.1:${server.port}/$path").openConnection() as HttpURLConnection
                 connection.requestMethod = method; connection.connectTimeout = 2000; connection.readTimeout = 2000
                 try { val code = connection.responseCode; return code to ((if (code < 400) connection.inputStream else connection.errorStream)?.readBytes() ?: ByteArray(0)) }
                 finally { connection.disconnect() }
             }
+            val master = request("secret/master.m3u8")
+            assertEquals("<audio></audio>", String(request("receiver/index.html").second))
+            assertEquals(0, request("receiver/index.html", "HEAD").second.size)
+            assertEquals(404, request("receiver/../index.html").first)
+            assertEquals(404, request("receiver/seg-0.aac").first)
+            assertEquals(200, master.first)
+            assertTrue(String(master.second).contains("CODECS=\"mp4a.40.2\""))
+            assertTrue(String(master.second).endsWith("live.m3u8\n"))
             assertEquals(404, request("other/live.m3u8").first)
             assertEquals(503, request("secret/live.m3u8").first)
+            // The server logs transfer completion after flushing the response.
+            val logDeadline = System.nanoTime() + 1_000_000_000L
+            while (!Diagnostics.text().contains("status=503 Service Unavailable") && System.nanoTime() < logDeadline) Thread.sleep(5)
+            assertTrue(Diagnostics.text().contains("status=503 Service Unavailable"))
+            assertTrue(Diagnostics.text().contains("unrecognized_path status=404 Not Found"))
+            assertFalse(Diagnostics.text().contains("/secret/"))
             repeat(6) { hls.publish(HlsStream.adts(byteArrayOf(1,2,3)), 47, it * 1002667L) }
             val playlist = request("secret/live.m3u8")
             assertEquals(200, playlist.first); assertTrue(String(playlist.second).startsWith("#EXTM3U"))

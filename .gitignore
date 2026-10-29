@@ -16,6 +16,9 @@ signing.properties
 *.jks
 *.keystore
 *.p12
+*.pfx
+*.key
+*service-account*.json
 
 # Kotlin
 .kotlin/

@@ -5,7 +5,7 @@ import java.util.Locale
 import kotlin.math.ceil
 
 /** RFC 8216 packed AAC: each segment starts with an ID3 transport timestamp. */
-class HlsStream(bufferSeconds: Int = 6) {
+class HlsStream(bufferSeconds: Int = 6, private val fastStartup: Boolean = false) {
     init { require(bufferSeconds in 6..30) }
     @Volatile var bufferSeconds: Int = bufferSeconds
         private set
@@ -13,21 +13,25 @@ class HlsStream(bufferSeconds: Int = 6) {
         require(seconds in 6..30)
         bufferSeconds=seconds
     }
-    data class Segment(val sequence: Long, val duration: Double, val data: ByteArray)
+    data class Segment(val sequence: Long, val duration: Double, val data: ByteArray, val ptsUs: Long)
+    private val wallClockOriginMs = System.currentTimeMillis()
     private val segments = ArrayDeque<Segment>()
     private var next = 0L
-    private val windowCount get() = ceil(bufferSeconds / SEGMENT_SECONDS).toInt() + 3
-    private val retainCount get() = windowCount * 2 + 2
+    // Keep recovery history independent of the requested live-edge offset and startup delay.
+    private val windowCount get() = maxOf(ceil(18.0 / SEGMENT_SECONDS).toInt(), ceil(bufferSeconds / SEGMENT_SECONDS).toInt() + 3)
+    private val retainCount get() = maxOf(ceil(60.0 / SEGMENT_SECONDS).toInt(), windowCount * 2 + 2)
     @Volatile var ended = false
         private set
     @Synchronized fun publish(aac: ByteArray, frames: Int, ptsUs: Long) {
         require(frames > 0 && aac.isNotEmpty())
-        segments.addLast(Segment(next++, frames * 1024.0 / 48000, timestamp(ptsUs) + aac))
+        segments.addLast(Segment(next++, frames * 1024.0 / 48000, timestamp(ptsUs) + aac, ptsUs))
         while (segments.size > retainCount) segments.removeFirst()
     }
     @Synchronized fun finish() { ended = true }
-    @Synchronized fun ready() = segments.size >= ceil(bufferSeconds / SEGMENT_SECONDS).toInt()
+    // The custom receiver starts with two segments; send at three instead of waiting twice.
+    @Synchronized fun ready() = segments.size >= ceil((if (fastStartup && bufferSeconds == 6) 3 else bufferSeconds) / SEGMENT_SECONDS).toInt()
     @Synchronized fun bufferDuration() = segments.takeLast(windowCount).sumOf { it.duration }
+    @Synchronized fun startPositionMs() = ((bufferDuration() - bufferSeconds).coerceAtLeast(0.0) * 1000).toLong()
     @Synchronized fun retainedCount() = segments.size
     @Synchronized fun latestSequence() = next - 1
     @Synchronized fun segment(sequence: Long) = segments.firstOrNull { it.sequence == sequence }?.data
@@ -35,9 +39,10 @@ class HlsStream(bufferSeconds: Int = 6) {
         if (!ready()) return null
         val visible = segments.takeLast(windowCount)
         return buildString {
-            append("#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n")
+            append("#EXTM3U\n#EXT-X-VERSION:6\n#EXT-X-TARGETDURATION:1\n")
             append("#EXT-X-MEDIA-SEQUENCE:${visible.first().sequence}\n")
             append("#EXT-X-START:TIME-OFFSET=-${bufferSeconds.toDouble()},PRECISE=NO\n")
+            append("#EXT-X-PROGRAM-DATE-TIME:${java.time.Instant.ofEpochMilli(wallClockOriginMs + visible.first().ptsUs / 1000)}\n")
             visible.forEach { append(String.format(Locale.US, "#EXTINF:%.6f,\nseg-%d.aac\n", it.duration, it.sequence)) }
             if (ended) append("#EXT-X-ENDLIST\n")
         }.toByteArray(Charsets.UTF_8)

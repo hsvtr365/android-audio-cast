@@ -26,6 +26,7 @@ class LiveService : Service() {
             get() = statusText()
             private set(value) { statusText = { value } }
         @Volatile var streamUrl: String? = null
+        @Volatile var streamStartPositionMs = 0L
         @Volatile var networkStatus = Strings.get(R.string.network_waiting)
         @Volatile var elapsedSeconds = 0L
         @Volatile var inputDbfs = -120.0
@@ -72,6 +73,7 @@ class LiveService : Service() {
                 bufferedSeconds=hls.bufferDuration(); CastController.streamChanged()
                 Diagnostics.log("Buffer target updated $requested seconds")
             }
+            streamStartPositionMs = hls.startPositionMs()
             ready = hls.ready() && server?.healthy == true
             CastController.tick(streamUrl, ready)
             relaySession?.apply {
@@ -82,7 +84,7 @@ class LiveService : Service() {
                         else android.support.v4.media.session.PlaybackStateCompat.STATE_BUFFERING,
                         android.support.v4.media.session.PlaybackStateCompat.PLAYBACK_POSITION_UNKNOWN, 1f).build())
             }
-            main.postDelayed(this, 2000)
+            main.postDelayed(this, 500)
         }
     }
     override fun onBind(intent: Intent?) = null
@@ -118,9 +120,8 @@ class LiveService : Service() {
                 .setContentText(Strings.get(R.string.notification_body))
                 .setContentIntent(PendingIntent.getActivity(this, 20, Intent(this, MainActivity::class.java), PendingIntent.FLAG_IMMUTABLE))
                 .addAction(Notification.Action.Builder(null, Strings.get(R.string.stop), stop).build())
-                .setStyle(Notification.MediaStyle()
-                    .setMediaSession(relaySession!!.sessionToken.token as android.media.session.MediaSession.Token)
-                    .setShowActionsInCompactView(0))
+                .setCategory(Notification.CATEGORY_SERVICE)
+                .setOnlyAlertOnce(true)
                 .setOngoing(true).build()
             startForeground(20, notification, if (sample) ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PLAYBACK else ServiceInfo.FOREGROUND_SERVICE_TYPE_MEDIA_PROJECTION)
             foregroundActive = true
@@ -132,7 +133,7 @@ class LiveService : Service() {
                 }, main)
             }
             val prefs = getSharedPreferences("settings", 0)
-            hls = HlsStream(prefs.getInt("buffer", 6).coerceIn(6, 30))
+            hls = HlsStream(prefs.getInt("buffer", 6).coerceIn(6, 30), fastStartup = getString(R.string.cast_receiver_app_id) != "CC1AD845")
             elapsedSeconds = 0; inputDbfs = -120.0; bufferedSeconds = 0.0
             targetDelay = hls.bufferSeconds; qualityBitrate = prefs.getInt("bitrate", 192000); sampleMode = sample
             active = true; running = true; ready = false; status = Strings.get(R.string.encoder_starting)
@@ -151,13 +152,14 @@ class LiveService : Service() {
         val ip = wifiAddress(this)
         networkStatus = if (ip == null) Strings.get(R.string.no_wifi_ip) else "Wi-Fi $ip"
         if (ip == address && server?.healthy == true) return
+        Diagnostics.log("Network rebind old=$address new=$ip healthy=${server?.healthy}")
         server?.close(); server = null; address = null; streamUrl = null; ready = false
         if (ip != null) {
             try {
-                server = LocalStreamServer(ip, token, hls); address = ip
+                server = LocalStreamServer(ip, token, hls, receiverHtml = assets.open("index.html").use { it.readBytes() }); address = ip
                 streamUrl = "http://$ip:8088/$token/live.m3u8"
                 CastController.streamChanged()
-                Diagnostics.log("HTTP ready $streamUrl")
+                Diagnostics.log("HTTP ready address=$ip port=8088")
             } catch (e: Exception) { networkStatus = Strings.get(R.string.http_retry,e.javaClass.simpleName); Diagnostics.log(networkStatus) }
         }
     }
@@ -256,7 +258,7 @@ class LiveService : Service() {
                         if (segmentFrames >= HlsStream.SEGMENT_FRAMES) {
                             hls.publish(encoded.toByteArray(), segmentFrames, segmentPts)
                             encoded.reset(); segmentFrames = 0
-                            Diagnostics.log("HLS sequence=${hls.latestSequence()} buffer=${"%.1f".format(java.util.Locale.US, hls.bufferDuration())} retained=${hls.retainedCount()}")
+                            if (hls.latestSequence() % 10L == 0L) { Diagnostics.save(); Diagnostics.log("HLS sequence=${hls.latestSequence()} buffer=${"%.1f".format(java.util.Locale.US, hls.bufferDuration())} retained=${hls.retainedCount()}") }
                         }
                     }
                     outputEos = info.flags and MediaCodec.BUFFER_FLAG_END_OF_STREAM != 0
@@ -278,6 +280,7 @@ class LiveService : Service() {
             }
             if (segmentFrames > 0) hls.publish(encoded.toByteArray(), segmentFrames, segmentPts)
         } catch (e: Exception) {
+            Diagnostics.error("Encoder stopped", e)
             if (!permissionEnded) stopReason = Strings.get(R.string.relay_error,e.message ?: e.javaClass.simpleName)
             Diagnostics.log(stopReason)
         }

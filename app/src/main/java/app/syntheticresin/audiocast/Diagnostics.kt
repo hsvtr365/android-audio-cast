@@ -10,12 +10,21 @@ import java.util.Locale
 object Diagnostics {
     private val lines = ArrayDeque<String>()
     private var context: Context? = null
-    fun init(app: Context) { context = app.applicationContext }
+    @Synchronized fun init(app: Context) {
+        if (context != null) return
+        context = app.applicationContext
+        val file = File(app.filesDir, "relay-diagnostics.txt")
+        if (file.exists()) runCatching { lines.addAll(file.readLines().takeLast(1500)) }
+        log("Diagnostics initialized version=${app.packageManager.getPackageInfo(app.packageName, 0).versionName} Android=${android.os.Build.VERSION.RELEASE}")
+    }
     @Synchronized fun log(message: String) {
-        val line = SimpleDateFormat("HH:mm:ss", Locale.US).format(Date()) + " " + message
-        lines.addLast(line.take(500)); while (lines.size > 250) lines.removeFirst()
-        Log.i("CastRelay", message)
+        val line = SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.US).format(Date()) + " " + message
+        lines.addLast(line.take(2000)); while (lines.size > 1500) lines.removeFirst()
+        if (context != null) Log.i("CastRelay", message)
+    }
+    fun error(message: String, error: Throwable) {
+        log("$message: ${error.javaClass.simpleName}: ${error.message} " + error.stackTrace.take(8).joinToString(" <- "))
     }
     @Synchronized fun text() = lines.joinToString("\n")
-    @Synchronized fun save() { context?.let { File(it.filesDir, "relay-diagnostics.txt").writeText(text()) } }
+    @Synchronized fun save() { context?.let { runCatching { File(it.filesDir, "relay-diagnostics.txt").writeText(text()) } } }
 }

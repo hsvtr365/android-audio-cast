@@ -6,16 +6,18 @@ val releaseSigning = Properties().apply {
     if (releaseSigningFile.exists()) releaseSigningFile.reader(Charsets.UTF_8).use { load(it) }
 }
 android {
+    buildFeatures { resValues = true }
+    sourceSets.getByName("main").assets.srcDir("../receiver/web")
     namespace = "app.syntheticresin.audiocast"
     compileSdk = 37
     defaultConfig {
         applicationId = "app.syntheticresin.audiocast"
+        resValue("string", "cast_receiver_app_id", providers.gradleProperty("castReceiverAppId").getOrElse("E1D7D101"))
         minSdk = 29
         targetSdk = 37
-        versionCode = 43
-        versionName = "0.43"
+        versionCode = 53
+        versionName = "44.0.9"
     }
-    buildTypes.getByName("debug").applicationIdSuffix = ".debug"
     if (releaseSigningFile.exists()) {
         signingConfigs {
             create("upload") {

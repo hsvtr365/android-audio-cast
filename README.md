@@ -25,7 +25,7 @@ Android 기기에서 재생 중인 오디오를 실시간으로 캡처하여 **A
 - **📱 재생 앱 자동 감지 (MediaSession)**
   - 현재 재생 중인 음악 앱(예: YouTube Music, Spotify, Suno 등)의 이름과 앱 아이콘을 자동으로 감지하여 메인 카드에 표시
 - **⏱ 지연 시간 & 버퍼 제어**
-  - 목표 지연 시간을 15초~30초 범위에서 사용자 환경에 맞게 유연하게 설정 가능
+  - 목표 지연 시간을 6초~30초 범위에서 사용자 환경에 맞게 유연하게 설정 가능
 - **🔗 외부 플레이어 호환 (스트림 주소 복사)**
   - Cast 기기가 없더라도 로컬 Wi-Fi 내의 PC나 다른 기기에서 VLC, Safari 등 HLS 지원 플레이어로 직접 청취 가능
 - **🎨 현대적인 Material Design 3 DayNight UI**
@@ -41,7 +41,7 @@ Android 기기에서 재생 중인 오디오를 실시간으로 캡처하여 **A
 - **정보 대시보드**: 네트워크 상태(IP), 현재 버퍼링 상태, 목표 지연 시간, 오디오 비트레이트
 - **설정 패널(Bottom Sheet)**:
   - AAC 비트레이트 품질 선택 (128k ~ 320k)
-  - 목표 지연 시간 설정 (15s ~ 30s)
+  - 목표 지연 시간 설정 (6s ~ 30s)
   - 테마 설정 (시스템 기본 / 라이트 / 다크)
   - 언어 설정 (한국어 / English)
   - 스트림 URL 복사 (PC 및 타 기기 테스트용)
@@ -155,3 +155,26 @@ app/src/main/
 
 - 아이콘 리소스: [Google Material Design Icons](https://github.com/google/material-design-icons) (Apache-2.0 License)
 - 본 프로젝트 소스 코드는 오픈소스로 제공됩니다.
+
+
+## Cast 수신기와 배포 (44.0.9)
+
+기본 Cast 앱 ID는 `E1D7D101`이며, 수신기는
+[고정 HTTPS 페이지](https://hsvtr365.github.io/android-audio-cast/)에서 실행됩니다.
+수신기만 웹에서 제공하고 실제 오디오는 같은 Wi-Fi의 휴대폰에서 스피커로 전달합니다.
+이전 기본 수신기를 비교하려면 `-PcastReceiverAppId=CC1AD845`로 빌드합니다.
+수신기 소스와 운영 방법은 [receiver/README.md](receiver/README.md)를 참고하세요.
+
+```powershell
+.\gradlew.bat testDebugUnitTest
+.\gradlew.bat bundleRelease assembleRelease
+```
+
+Release 서명은 Git에서 제외된 `signing.properties`의 `storeFile`, `storePassword`,
+`keyAlias`, `keyPassword`로 설정합니다. 키와 비밀번호는 저장소에 추가하지 마세요.
+빌드 결과는 `app/build/outputs/bundle/release/`와 `app/build/outputs/apk/release/`에 생성됩니다.
+
+실기기에서 폰 호스팅44.0.8의 홈 그룹 세 대 첫 소리9초이내와 Wi-Fi8초 차단 후 자동복귀를
+확인했습니다. 복구 후18분45초의113개 재생 상태 표본에서 추가재시도·오류는 없었습니다.
+이는 단기 시험 결과이며 모든 환경의 시작시간·장기 안정성 보장은 아닙니다.
+44.0.9는 서명된 배포 파일 빌드 및 Release lint를 통과했지만 Play 업로드·승인은 아직 완료하지 않았습니다.

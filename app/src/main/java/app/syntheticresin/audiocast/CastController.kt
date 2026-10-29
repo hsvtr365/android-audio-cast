@@ -25,7 +25,11 @@ object CastController {
     private var loadedUrl: String? = null
     private var ownedUrl: String? = null
     private var bufferingSince = 0L
+    private val recovery = CastRecovery()
+    private var loadGeneration = 0L
     private var lastAttempt = 0L
+    private var lastDiagnosticState = ""
+    private var lastHeartbeat = 0L
     private var app: Context? = null
     private var router: MediaRouter? = null
     private var autoTried = false
@@ -73,42 +77,60 @@ object CastController {
         val route = router?.routes?.firstOrNull { it.id == saved && it.isEnabled && it.matchesSelector(selector) } ?: return
         autoTried = true; statusText = { Strings.get(R.string.auto_attempt,route.name) }; route.select()
     }
-    fun streamChanged() { loadedUrl = null; lastAttempt = 0; bufferingSince = 0 }
+    fun streamChanged() { recovery.reset(); loadedUrl = null; lastAttempt = 0; bufferingSince = 0 }
     fun tick(url: String?, ready: Boolean) {
         val session = context?.sessionManager?.currentCastSession ?: return
-        if (!session.isConnected || !ready || url == null) return
+        if (!session.isConnected || url == null || !ready) return
         val remote = session.remoteMediaClient ?: return
         val media = remote.mediaStatus
+        val now = SystemClock.elapsedRealtime()
+        val state = "connected=${session.isConnected} player=${media?.playerState} idle=${media?.idleReason} owned=${remote.mediaInfo?.contentId == ownedUrl}"
+        if (state != lastDiagnosticState || now - lastHeartbeat >= 10000) {
+            Diagnostics.log("Cast state $state positionMs=${remote.approximateStreamPosition} bufferingMs=${if (bufferingSince == 0L) 0 else now - bufferingSince} loaded=${loadedUrl != null}")
+            lastDiagnosticState = state; lastHeartbeat = now
+        }
         if (media?.playerState == MediaStatus.PLAYER_STATE_PLAYING) { statusText = { Strings.get(R.string.cast_playing) }; bufferingSince = 0 }
         else if (media?.playerState == MediaStatus.PLAYER_STATE_BUFFERING) {
             statusText = { Strings.get(R.string.cast_buffering) }
             if (bufferingSince == 0L) bufferingSince = SystemClock.elapsedRealtime()
-            if (SystemClock.elapsedRealtime() - bufferingSince > 30000) { loadedUrl = null; bufferingSince = 0 }
+
+        }
+        // Do not reclaim another app's media or a stream the user paused.
+        if (loadedUrl == url && remote.mediaInfo?.contentId != ownedUrl && remote.mediaInfo != null) return
+        if (recovery.shouldRetry(now,
+                media?.playerState == MediaStatus.PLAYER_STATE_PLAYING,
+                media?.playerState == MediaStatus.PLAYER_STATE_BUFFERING)) {
+            Diagnostics.log("Cast retry reason=repeated_buffering fresh_live_url=true")
+            loadedUrl = null
         }
         if (loadedUrl == url && media?.playerState == MediaStatus.PLAYER_STATE_IDLE &&
-            media.idleReason in listOf(MediaStatus.IDLE_REASON_ERROR, MediaStatus.IDLE_REASON_FINISHED)) loadedUrl = null
+            media.idleReason in listOf(MediaStatus.IDLE_REASON_ERROR, MediaStatus.IDLE_REASON_FINISHED)) { Diagnostics.log("Cast retry reason=idle_${media.idleReason}"); loadedUrl = null }
         if (loadedUrl == url || SystemClock.elapsedRealtime() - lastAttempt < 10000) return
-        lastAttempt = SystemClock.elapsedRealtime(); loadedUrl = url; ownedUrl = url
+        Diagnostics.log("Cast load attempt device=$device ready=$ready previousLoaded=${loadedUrl != null} player=${media?.playerState}")
+        lastAttempt = SystemClock.elapsedRealtime(); loadedUrl = url
+        val generation = ++loadGeneration
+        val requestUrl = "${url.substringBeforeLast('/')}/master.m3u8?attempt=$generation"
+        ownedUrl = requestUrl
         val metadata = MediaMetadata(MediaMetadata.MEDIA_TYPE_MUSIC_TRACK).apply { putString(MediaMetadata.KEY_TITLE, Strings.get(R.string.cast_title)) }
-        val info = MediaInfo.Builder(url).setContentType("application/vnd.apple.mpegurl")
+        val info = MediaInfo.Builder(requestUrl).setContentType("application/vnd.apple.mpegurl")
             .setStreamType(MediaInfo.STREAM_TYPE_LIVE).setHlsSegmentFormat(HlsSegmentFormat.AAC).setMetadata(metadata).build()
         statusText = { Strings.get(R.string.cast_loading) }
         try {
             remote.load(MediaLoadRequestData.Builder().setMediaInfo(info).setAutoplay(true).build()).setResultCallback { result ->
-                if (loadedUrl != url || !LiveService.running) return@setResultCallback
-                if (result.status.isSuccess) { statusText = { Strings.get(R.string.cast_accepted) }; Diagnostics.log("Cast load accepted") }
-                else { loadedUrl = null; statusText = { Strings.get(R.string.cast_load_failed) }; Diagnostics.log("Cast load failed ${result.status.statusCode}") }
+                if (generation != loadGeneration || loadedUrl != url || !LiveService.running) return@setResultCallback
+                if (result.status.isSuccess) { statusText = { Strings.get(R.string.cast_accepted) }; Diagnostics.log("Cast load accepted (awaiting receiver PLAYING)") }
+                else { loadedUrl = null; statusText = { Strings.get(R.string.cast_load_failed) }; Diagnostics.log("Cast load failed code=${result.status.statusCode} message=${result.status.statusMessage}") }
             }
-        } catch (e: Exception) { loadedUrl = null; statusText = { Strings.get(R.string.cast_retry) }; Diagnostics.log("Cast load: ${e.javaClass.simpleName}") }
+        } catch (e: Exception) { loadedUrl = null; statusText = { Strings.get(R.string.cast_retry) }; Diagnostics.error("Cast load", e) }
     }
     fun stopMedia() {
         val remote = context?.sessionManager?.currentCastSession?.remoteMediaClient
         try { if (ownedUrl != null && remote?.mediaInfo?.contentId == ownedUrl) remote?.stop() }
         catch (e: Exception) { Diagnostics.log("Cast stop: ${e.javaClass.simpleName}") }
-        loadedUrl = null; ownedUrl = null; bufferingSince = 0
+        recovery.reset(); loadGeneration++; loadedUrl = null; ownedUrl = null; bufferingSince = 0
     }
     private fun connected(session: CastSession) {
-        loadedUrl = null; ownedUrl = null; bufferingSince = 0; deviceName = session.castDevice?.friendlyName ?: Strings.get(R.string.cast_device)
+        recovery.reset(); loadGeneration++; loadedUrl = null; ownedUrl = null; bufferingSince = 0; deviceName = session.castDevice?.friendlyName ?: Strings.get(R.string.cast_device)
         statusText = { Strings.get(R.string.cast_connected) }
         val prefs = app?.getSharedPreferences("settings", 0)
         if (prefs?.getBoolean("remember", true) == true) {
@@ -119,13 +141,13 @@ object CastController {
     }
     private val listener = object : SessionManagerListener<CastSession> {
         override fun onSessionStarting(session: CastSession) { statusText = { Strings.get(R.string.cast_connecting) } }
-        override fun onSessionStarted(session: CastSession, id: String) { connected(session) }
+        override fun onSessionStarted(session: CastSession, id: String) { Diagnostics.log("Cast session started id=$id"); connected(session) }
         override fun onSessionStartFailed(session: CastSession, error: Int) { statusText = { Strings.get(R.string.cast_connect_failed,error) }; Diagnostics.log(status) }
-        override fun onSessionEnding(session: CastSession) { statusText = { Strings.get(R.string.cast_ending) } }
-        override fun onSessionEnded(session: CastSession, error: Int) { loadedUrl = null; ownedUrl = null; statusText = { Strings.get(R.string.cast_ended,error) }; deviceName = null }
+        override fun onSessionEnding(session: CastSession) { Diagnostics.log("Cast session ending"); statusText = { Strings.get(R.string.cast_ending) } }
+        override fun onSessionEnded(session: CastSession, error: Int) { Diagnostics.log("Cast session ended error=$error"); loadedUrl = null; ownedUrl = null; statusText = { Strings.get(R.string.cast_ended,error) }; deviceName = null }
         override fun onSessionResuming(session: CastSession, id: String) { statusText = { Strings.get(R.string.cast_resuming) } }
-        override fun onSessionResumed(session: CastSession, suspended: Boolean) { connected(session) }
-        override fun onSessionResumeFailed(session: CastSession, error: Int) { statusText = { Strings.get(R.string.cast_resume_failed,error) } }
-        override fun onSessionSuspended(session: CastSession, reason: Int) { loadedUrl = null; statusText = { Strings.get(R.string.cast_suspended,reason) } }
+        override fun onSessionResumed(session: CastSession, suspended: Boolean) { Diagnostics.log("Cast session resumed suspended=$suspended"); connected(session) }
+        override fun onSessionResumeFailed(session: CastSession, error: Int) { Diagnostics.log("Cast resume failed error=$error"); statusText = { Strings.get(R.string.cast_resume_failed,error) } }
+        override fun onSessionSuspended(session: CastSession, reason: Int) { Diagnostics.log("Cast session suspended reason=$reason"); loadedUrl = null; statusText = { Strings.get(R.string.cast_suspended,reason) } }
     }
 }
